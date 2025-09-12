@@ -14,6 +14,13 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
+EUREKA_SERVER = "http://discovery:8761/eureka"
+APP_NAME = "media-service"
+APP_PORT = 6001
+HOSTNAME = "media-service"
+
+
+
 app = Flask(__name__)
 
 # --- MinIO config (dùng env cho bảo mật) ---
@@ -35,6 +42,24 @@ def generate_stream(obj_body, chunk_size=8192):
     for chunk in obj_body.iter_chunks(chunk_size=chunk_size):
         if chunk:
             yield chunk
+
+
+@app.on_event("startup")
+async def startup_event():
+    await eureka_client.init_async(
+        eureka_server=EUREKA_SERVER,
+        app_name=APP_NAME,
+        instance_port=APP_PORT,
+        instance_host=HOSTNAME,
+        instance_id=f"{HOSTNAME}:{APP_PORT}",
+        data_center_name="MyOwn"
+    )
+
+@app.on_event("shutdown")
+async def shutdown_event():
+    await eureka_client.stop_async()
+
+
 
 @app.route("/get_video", methods=["GET"])
 def get_video():
