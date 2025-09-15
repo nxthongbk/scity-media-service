@@ -18,7 +18,7 @@ logger = logging.getLogger(__name__)
 
 EUREKA_SERVER = "http://discovery:8761/eureka"
 APP_NAME = "media-service"
-APP_PORT = 6001
+APP_PORT = 9002
 HOSTNAME = "media-service"
 
 app = FastAPI()
