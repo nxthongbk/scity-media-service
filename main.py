@@ -37,6 +37,13 @@ s3_client = boto3.client(
 )
 
 
+
+def generate_stream(obj_body, chunk_size=8192):
+    for chunk in obj_body.iter_chunks(chunk_size=chunk_size):
+        if chunk:
+            yield chunk
+
+            
 # --- Eureka ---
 @app.on_event("startup")
 async def startup_event():
