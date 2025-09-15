@@ -64,6 +64,7 @@ async def shutdown_event():
 
 
 # --- API ---
+
 @app.get("/get_video")
 async def get_video(
     alarm_time: str = Query(..., description="Format: YYYY-MM-DD_HH:MM:SS"),
@@ -115,20 +116,25 @@ async def get_video(
                     closest_delta = delta
                     closest_file = f
 
-        if closest_file:
-            return {"file": closest_file}
-        else:
+        if not closest_file:
             return JSONResponse(
                 status_code=404,
                 content={"error": "No earlier file found"}
             )
+
+        # ✅ Stream video trực tiếp từ MinIO
+        s3_object = s3_client.get_object(Bucket=MINIO_BUCKET, Key=closest_file)
+        return StreamingResponse(
+            generate_stream(s3_object["Body"]),
+            media_type="video/mp4",
+            headers={"Content-Disposition": f"inline; filename={os.path.basename(closest_file)}"}
+        )
 
     except ClientError:
         return JSONResponse(status_code=500, content={"error": "MinIO access error"})
     except Exception as e:
         logger.error(f"Unexpected error: {e}", exc_info=True)
         return JSONResponse(status_code=500, content={"error": "Server error"})
-
 
 
 if __name__ == "__main__":
