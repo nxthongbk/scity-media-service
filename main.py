@@ -65,16 +65,23 @@ async def shutdown_event():
 
 # --- API ---
 
+from fastapi.responses import StreamingResponse
+from fastapi import Query
+
+TIME_OFFSET_HOURS = 7  # vì file lưu GMT, client truyền vào GMT+7
+
 @app.get("/get_video")
 async def get_video(
-    alarm_time: str = Query(..., description="Format: YYYY-MM-DD_HH:MM:SS"),
+    alarm_time: str = Query(..., description="Format: YYYY-MM-DD_HH:MM:SS (local GMT+7)"),
     camera: str = Query(..., description="Camera name (folder prefix)")
 ):
     logger.info(f"Received request with alarm_time={alarm_time}, camera={camera}")
 
-    # Parse datetime
+    # Parse datetime từ client
     try:
-        input_time = datetime.datetime.strptime(alarm_time, "%Y-%m-%d_%H:%M:%S")
+        input_time_local = datetime.datetime.strptime(alarm_time, "%Y-%m-%d_%H:%M:%S")
+        # Convert sang GMT để so khớp với file
+        input_time = input_time_local - datetime.timedelta(hours=TIME_OFFSET_HOURS)
     except Exception:
         return JSONResponse(
             status_code=400,
@@ -82,7 +89,7 @@ async def get_video(
         )
 
     try:
-        # Prefix: camera/YYYY-MM-DD/
+        # Prefix theo GMT
         prefix = f"{camera}/{input_time.strftime('%Y-%m-%d/')}"
         logger.info(f"Listing objects in prefix={prefix}")
 
