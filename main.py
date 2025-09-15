@@ -69,25 +69,26 @@ async def shutdown_event():
 
 # --- API ---
 @app.get("/get_video")
-async def get_video(datetime_str: str, camera: str = "cam01"):
-    logger.info(f"Received request with datetime={datetime_str}, camera={camera}")
+async def get_video(datetime: str, camera: str = "cam01"):
+    logger.info(f"Received request with datetime={datetime}, camera={camera}")
 
     try:
         # input dạng YYYY-MM-DD_HH:MM:SS
-        input_time = datetime.datetime.strptime(datetime_str, "%Y-%m-%d_%H:%M:%S")
+        input_time = datetime.datetime.strptime(datetime, "%Y-%m-%d_%H:%M:%S")
     except Exception:
-        logger.error(f"Invalid datetime format: {datetime_str}")
+        logger.error(f"Invalid datetime format: {datetime}")
         return JSONResponse(
             status_code=400,
             content={"error": "Invalid datetime format. Use YYYY-MM-DD_HH:MM:SS"},
         )
 
     try:
-        # Tạo prefix theo ngày
+        # ==============================
+        # Tạo prefix: camera/YYYY/MM/DD/
+        # ==============================
         prefix = f"{camera}/{input_time.strftime('%Y/%m/%d/')}"
-        logger.info(f"Searching in prefix={prefix}")
+        logger.info(f"Listing objects in prefix={prefix}")
 
-        # Lấy object trong ngày đó
         objects = s3_client.list_objects_v2(Bucket=MINIO_BUCKET, Prefix=prefix)
         if "Contents" not in objects:
             return JSONResponse(
@@ -95,36 +96,9 @@ async def get_video(datetime_str: str, camera: str = "cam01"):
                 content={"error": f"No files found for {prefix}"},
             )
 
-        after_candidates = []
-        for obj in objects["Contents"]:
-            file_name = obj["Key"].split("/")[-1]  # lấy HHMMSS.mp4
-            try:
-                ts = datetime.datetime.strptime(
-                    input_time.strftime("%Y-%m-%d_") + file_name.replace(".mp4", ""),
-                    "%Y-%m-%d_%H%M%S",
-                )
-                if ts > input_time:
-                    after_candidates.append((ts, obj["Key"]))
-            except Exception:
-                logger.warning(f"Skip file {obj['Key']} (parse failed)")
+        file_list = [obj["Key"] for obj in objects["Contents"]]
 
-        if not after_candidates:
-            return JSONResponse(
-                status_code=404,
-                content={"error": "No file found after given datetime"},
-            )
-
-        # Chọn file gần nhất sau thời điểm input
-        chosen_file = min(after_candidates, key=lambda x: x[0])[1]
-        logger.info(f"Using nearest after: {chosen_file}")
-
-        s3_object = s3_client.get_object(Bucket=MINIO_BUCKET, Key=chosen_file)
-
-        return StreamingResponse(
-            generate_stream(s3_object["Body"]),
-            media_type="video/mp4",
-            headers={"Content-Disposition": f"inline; filename={chosen_file}"},
-        )
+        return {"files": file_list}
 
     except ClientError as e:
         logger.error(f"Error accessing MinIO: {e}")
@@ -132,7 +106,6 @@ async def get_video(datetime_str: str, camera: str = "cam01"):
     except Exception as e:
         logger.error(f"Unexpected error: {e}")
         return JSONResponse(status_code=500, content={"error": "Server error"})
-
 
 if __name__ == "__main__":
     import uvicorn
