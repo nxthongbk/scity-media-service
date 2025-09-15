@@ -75,15 +75,14 @@ async def get_video(
     try:
         input_time = datetime.datetime.strptime(alarm_time, "%Y-%m-%d_%H:%M:%S")
     except Exception:
-        logger.error(f"Invalid datetime format: {alarm_time}")
         return JSONResponse(
             status_code=400,
             content={"error": "Invalid datetime format. Use YYYY-MM-DD_HH:MM:SS"},
         )
 
     try:
-        # Prefix theo ngày: camera/YYYY/MM/DD/
-        prefix = f"{camera}/{input_time.strftime('%Y/%m/%d/')}"
+        # Prefix: camera/YYYY-MM-DD/
+        prefix = f"{camera}/{input_time.strftime('%Y-%m-%d/')}"
         logger.info(f"Listing objects in prefix={prefix}")
 
         objects = s3_client.list_objects_v2(Bucket=MINIO_BUCKET, Prefix=prefix)
@@ -93,30 +92,30 @@ async def get_video(
                 content={"error": f"No files found for {prefix}"},
             )
 
-        # Parse file list
         file_list = [obj["Key"] for obj in objects["Contents"] if obj["Key"].endswith(".mp4")]
         logger.info(f"Found {len(file_list)} files under {prefix}")
 
-        target_time = input_time.time()
         closest_file = None
-        closest_ts = None
+        closest_delta = None
 
         for f in file_list:
-            fname = os.path.basename(f)  # ví dụ 142530.mp4
+            fname = os.path.basename(f)  # ví dụ: 141530.mp4
             ts_str = fname.replace(".mp4", "")
             try:
-                file_time = datetime.datetime.strptime(ts_str, "%H%M%S").time()
+                file_dt = datetime.datetime.strptime(
+                    input_time.strftime("%Y-%m-%d_") + ts_str,
+                    "%Y-%m-%d_%H%M%S"
+                )
             except ValueError:
-                logger.warning(f"Cannot parse time from {fname}")
                 continue
 
-            if file_time <= target_time:
-                if closest_ts is None or file_time > closest_ts:
-                    closest_ts = file_time
+            if file_dt <= input_time:
+                delta = (input_time - file_dt).total_seconds()
+                if closest_delta is None or delta < closest_delta:
+                    closest_delta = delta
                     closest_file = f
 
         if closest_file:
-            logger.info(f"Closest file found: {closest_file}")
             return {"file": closest_file}
         else:
             return JSONResponse(
@@ -124,12 +123,12 @@ async def get_video(
                 content={"error": "No earlier file found"}
             )
 
-    except ClientError as e:
-        logger.error(f"Error accessing MinIO: {e}")
+    except ClientError:
         return JSONResponse(status_code=500, content={"error": "MinIO access error"})
     except Exception as e:
         logger.error(f"Unexpected error: {e}", exc_info=True)
         return JSONResponse(status_code=500, content={"error": "Server error"})
+
 
 
 if __name__ == "__main__":
