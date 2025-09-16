@@ -1,5 +1,162 @@
+# from fastapi import FastAPI, Query
+# from fastapi.responses import JSONResponse
+# import datetime
+# import logging
+# import sys
+# import boto3
+# from botocore.exceptions import ClientError
+# import os
+# import py_eureka_client.eureka_client as eureka_client
+
+# # --- Logging ---
+# logging.basicConfig(
+#     level=logging.INFO,
+#     format="%(asctime)s [%(levelname)s] %(message)s",
+#     handlers=[logging.StreamHandler(sys.stdout)]
+# )
+# logger = logging.getLogger(__name__)
+
+# EUREKA_SERVER = "http://discovery:8761/eureka"
+# APP_NAME = "media-service"
+# APP_PORT = 9002
+# HOSTNAME = "media-service"
+
+# app = FastAPI()
+
+# # --- MinIO config ---
+# MINIO_ENDPOINT = os.getenv("MINIO_ENDPOINT", "http://minio:9000")
+# MINIO_ACCESS_KEY = os.getenv("MINIO_ACCESS_KEY", "admin")
+# MINIO_SECRET_KEY = os.getenv("MINIO_SECRET_KEY", "itp@2025")
+# MINIO_BUCKET = os.getenv("MINIO_BUCKET", "securevision")
+
+# s3_client = boto3.client(
+#     "s3",
+#     endpoint_url=MINIO_ENDPOINT,
+#     aws_access_key_id=MINIO_ACCESS_KEY,
+#     aws_secret_access_key=MINIO_SECRET_KEY,
+# )
+
+
+
+# def generate_stream(obj_body, chunk_size=8192):
+#     for chunk in obj_body.iter_chunks(chunk_size=chunk_size):
+#         if chunk:
+#             yield chunk
+
+            
+# # --- Eureka ---
+# @app.on_event("startup")
+# async def startup_event():
+#     try:
+#         await eureka_client.init_async(
+#             eureka_server=EUREKA_SERVER,
+#             app_name=APP_NAME,
+#             instance_port=APP_PORT,
+#             instance_host=HOSTNAME,
+#             instance_id=f"{HOSTNAME}:{APP_PORT}",
+#             data_center_name="MyOwn"
+#         )
+#         logger.info("Registered with Eureka successfully")
+#     except Exception as e:
+#         logger.error(f"Eureka registration failed: {e}")
+
+
+# @app.on_event("shutdown")
+# async def shutdown_event():
+#     try:
+#         await eureka_client.stop_async()
+#         logger.info("Deregistered from Eureka")
+#     except Exception as e:
+#         logger.error(f"Eureka deregistration failed: {e}")
+
+
+# # --- API ---
+
+# from fastapi.responses import StreamingResponse
+# from fastapi import Query
+
+# TIME_OFFSET_HOURS = 7  # vì file lưu GMT, client truyền vào GMT+7
+
+# @app.get("/get_video")
+# async def get_video(
+#     alarm_time: str = Query(..., description="Format: YYYY-MM-DD_HH:MM:SS (local GMT+7)"),
+#     camera: str = Query(..., description="Camera name (folder prefix)")
+# ):
+#     logger.info(f"Received request with alarm_time={alarm_time}, camera={camera}")
+
+#     # Parse datetime từ client
+#     try:
+#         input_time_local = datetime.datetime.strptime(alarm_time, "%Y-%m-%d_%H:%M:%S")
+#         # Convert sang GMT để so khớp với file
+#         input_time = input_time_local - datetime.timedelta(hours=TIME_OFFSET_HOURS)
+#     except Exception:
+#         return JSONResponse(
+#             status_code=400,
+#             content={"error": "Invalid datetime format. Use YYYY-MM-DD_HH:MM:SS"},
+#         )
+
+#     try:
+#         # Prefix theo GMT
+#         prefix = f"{camera}/{input_time.strftime('%Y-%m-%d/')}"
+#         logger.info(f"Listing objects in prefix={prefix}")
+
+#         objects = s3_client.list_objects_v2(Bucket=MINIO_BUCKET, Prefix=prefix)
+#         if "Contents" not in objects:
+#             return JSONResponse(
+#                 status_code=404,
+#                 content={"error": f"No files found for {prefix}"},
+#             )
+
+#         file_list = [obj["Key"] for obj in objects["Contents"] if obj["Key"].endswith(".mp4")]
+#         logger.info(f"Found {len(file_list)} files under {prefix}")
+
+#         closest_file = None
+#         closest_delta = None
+
+#         for f in file_list:
+#             fname = os.path.basename(f)  # ví dụ: 141530.mp4
+#             ts_str = fname.replace(".mp4", "")
+#             try:
+#                 file_dt = datetime.datetime.strptime(
+#                     input_time.strftime("%Y-%m-%d_") + ts_str,
+#                     "%Y-%m-%d_%H%M%S"
+#                 )
+#             except ValueError:
+#                 continue
+
+#             if file_dt <= input_time:
+#                 delta = (input_time - file_dt).total_seconds()
+#                 if closest_delta is None or delta < closest_delta:
+#                     closest_delta = delta
+#                     closest_file = f
+
+#         if not closest_file:
+#             return JSONResponse(
+#                 status_code=404,
+#                 content={"error": "No earlier file found"}
+#             )
+
+#         # ✅ Stream video trực tiếp từ MinIO
+#         s3_object = s3_client.get_object(Bucket=MINIO_BUCKET, Key=closest_file)
+#         return StreamingResponse(
+#             generate_stream(s3_object["Body"]),
+#             media_type="video/mp4",
+#             headers={"Content-Disposition": f"inline; filename={os.path.basename(closest_file)}"}
+#         )
+
+#     except ClientError:
+#         return JSONResponse(status_code=500, content={"error": "MinIO access error"})
+#     except Exception as e:
+#         logger.error(f"Unexpected error: {e}", exc_info=True)
+#         return JSONResponse(status_code=500, content={"error": "Server error"})
+
+
+# if __name__ == "__main__":
+#     import uvicorn
+#     logger.info("Starting FastAPI video API service...")
+#     uvicorn.run(app, host="0.0.0.0", port=APP_PORT)
 from fastapi import FastAPI, Query
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, StreamingResponse
 import datetime
 import logging
 import sys
@@ -36,14 +193,12 @@ s3_client = boto3.client(
     aws_secret_access_key=MINIO_SECRET_KEY,
 )
 
-
-
 def generate_stream(obj_body, chunk_size=8192):
     for chunk in obj_body.iter_chunks(chunk_size=chunk_size):
         if chunk:
             yield chunk
 
-            
+
 # --- Eureka ---
 @app.on_event("startup")
 async def startup_event():
@@ -71,11 +226,31 @@ async def shutdown_event():
 
 
 # --- API ---
+TIME_OFFSET_HOURS = 7   # vì file lưu GMT, client truyền vào GMT+7
+SEARCH_STEP_SECONDS = 10  # bước lùi tìm kiếm (10s)
+SEARCH_MAX_WINDOW = 60    # lùi tối đa 1 phút
 
-from fastapi.responses import StreamingResponse
-from fastapi import Query
+def find_closest_file(camera: str, input_time: datetime.datetime) -> str | None:
+    """
+    Tìm file gần nhất với input_time mà không cần list toàn bộ bucket.
+    File format: camera/YYYY-MM-DD/HHMMSS.mp4
+    """
+    prefix = f"{camera}/{input_time.strftime('%Y-%m-%d/')}"
+    
+    for delta in range(0, SEARCH_MAX_WINDOW + 1, SEARCH_STEP_SECONDS):
+        candidate_time = input_time - datetime.timedelta(seconds=delta)
+        candidate_key = prefix + candidate_time.strftime("%H%M%S.mp4")
+        try:
+            s3_client.head_object(Bucket=MINIO_BUCKET, Key=candidate_key)
+            logger.info(f"Found candidate file: {candidate_key}")
+            return candidate_key
+        except ClientError as e:
+            if e.response["Error"]["Code"] == "404":
+                continue
+            else:
+                raise
+    return None
 
-TIME_OFFSET_HOURS = 7  # vì file lưu GMT, client truyền vào GMT+7
 
 @app.get("/get_video")
 async def get_video(
@@ -89,47 +264,15 @@ async def get_video(
         input_time_local = datetime.datetime.strptime(alarm_time, "%Y-%m-%d_%H:%M:%S")
         # Convert sang GMT để so khớp với file
         input_time = input_time_local - datetime.timedelta(hours=TIME_OFFSET_HOURS)
-    except Exception:
+    except ValueError as e:
+        logger.warning(f"Invalid datetime input={alarm_time}, error={e}")
         return JSONResponse(
             status_code=400,
             content={"error": "Invalid datetime format. Use YYYY-MM-DD_HH:MM:SS"},
         )
 
     try:
-        # Prefix theo GMT
-        prefix = f"{camera}/{input_time.strftime('%Y-%m-%d/')}"
-        logger.info(f"Listing objects in prefix={prefix}")
-
-        objects = s3_client.list_objects_v2(Bucket=MINIO_BUCKET, Prefix=prefix)
-        if "Contents" not in objects:
-            return JSONResponse(
-                status_code=404,
-                content={"error": f"No files found for {prefix}"},
-            )
-
-        file_list = [obj["Key"] for obj in objects["Contents"] if obj["Key"].endswith(".mp4")]
-        logger.info(f"Found {len(file_list)} files under {prefix}")
-
-        closest_file = None
-        closest_delta = None
-
-        for f in file_list:
-            fname = os.path.basename(f)  # ví dụ: 141530.mp4
-            ts_str = fname.replace(".mp4", "")
-            try:
-                file_dt = datetime.datetime.strptime(
-                    input_time.strftime("%Y-%m-%d_") + ts_str,
-                    "%Y-%m-%d_%H%M%S"
-                )
-            except ValueError:
-                continue
-
-            if file_dt <= input_time:
-                delta = (input_time - file_dt).total_seconds()
-                if closest_delta is None or delta < closest_delta:
-                    closest_delta = delta
-                    closest_file = f
-
+        closest_file = find_closest_file(camera, input_time)
         if not closest_file:
             return JSONResponse(
                 status_code=404,
