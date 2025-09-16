@@ -232,17 +232,19 @@ SEARCH_MAX_WINDOW = 60    # lùi tối đa 1 phút
 
 def find_closest_file(camera: str, input_time: datetime.datetime) -> str | None:
     """
-    Tìm file gần nhất với input_time mà không cần list toàn bộ bucket.
+    Tìm file gần nhất với input_time bằng cách lùi từng giây.
     File format: camera/YYYY-MM-DD/HHMMSS.mp4
     """
     prefix = f"{camera}/{input_time.strftime('%Y-%m-%d/')}"
     
-    for delta in range(0, SEARCH_MAX_WINDOW + 1, SEARCH_STEP_SECONDS):
+    # Lùi tối đa SEARCH_MAX_WINDOW giây, từng giây một
+    for delta in range(0, SEARCH_MAX_WINDOW + 1):
         candidate_time = input_time - datetime.timedelta(seconds=delta)
         candidate_key = prefix + candidate_time.strftime("%H%M%S.mp4")
+        logger.info(f"Checking candidate: {candidate_key}")
         try:
             s3_client.head_object(Bucket=MINIO_BUCKET, Key=candidate_key)
-            logger.info(f"Found candidate file: {candidate_key}")
+            logger.info(f"✅ Found candidate file: {candidate_key}")
             return candidate_key
         except ClientError as e:
             if e.response["Error"]["Code"] == "404":
@@ -250,6 +252,7 @@ def find_closest_file(camera: str, input_time: datetime.datetime) -> str | None:
             else:
                 raise
     return None
+
 
 
 @app.get("/get_video")
